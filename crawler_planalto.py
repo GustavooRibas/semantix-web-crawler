@@ -25,7 +25,7 @@ DELAY = 0.5
 
 # URLs Sementes
 SEEDS = [
-    "https://www.in.gov.br/web/dou/-/resolucao-anatel-n-765-de-6-de-novembro-de-2023-522171563"
+    "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/decreto/D10046.htm"
 ]
 
 HEADERS = {
