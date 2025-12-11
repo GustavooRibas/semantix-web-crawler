@@ -14,14 +14,18 @@ STATE_FILE = "estado_crawler.json" # Arquivo para salvar o progresso
 MAX_DEPTH = 3
 DELAY = 0.5 
 
-# URLs Sementes
-SEEDS = [
+'''
     "http://www.planalto.gov.br/ccivil_03/leis/leis_complementares.htm",
     "http://www.planalto.gov.br/ccivil_03/legislacao/leisordinarias.htm",
     "http://www.planalto.gov.br/ccivil_03/medida_provisoria/quadro_mpv.htm",
     "http://www.planalto.gov.br/ccivil_03/decreto/quadro_decreto.htm",
     "http://www.planalto.gov.br/ccivil_03/constituicao/emendas/emc/quadro_emc.htm",
     "http://www.planalto.gov.br/ccivil_03/constituicao/constituicao.htm"
+'''
+
+# URLs Sementes
+SEEDS = [
+    "https://www.in.gov.br/web/dou/-/resolucao-anatel-n-765-de-6-de-novembro-de-2023-522171563"
 ]
 
 HEADERS = {
@@ -90,31 +94,72 @@ def is_valid_url(url):
     if ext in invalid_extensions:
         return False
 
-    return "ccivil_03" in parsed.path and "mailto:" not in url
+    # Aceita se for do domínio anatel OU se for ccivil_03
+    is_gov = "in.gov.br" in parsed.netloc
+    is_anatel = "informacoes.anatel.gov.br" in parsed.netloc
+    is_planalto = "ccivil_03" in parsed.path
+
+    return (is_anatel or is_planalto or is_gov) and "mailto:" not in url
 
 def is_content_file(url):
     filename = url.split('/')[-1].lower()
-    ignore_terms = ['quadro', 'index', 'default', 'menu']
+    ignore_terms = ['login', 'form', 'search', 'print=1', 'tmpl=component']
     
     if any(term in filename for term in ignore_terms):
         return False
+    
+    # Regra para o Diário Oficial (DOU)
+    if "in.gov.br" in url and "/web/dou/-/" in url:
+        return True
         
+    # Lógica para Anatel: Se tiver "resolucao" ou "lei" na URL, consideramos conteúdo
+    if "resolucao" in url.lower() or "lei" in url.lower():
+        return True
+
+    # Lógica para Planalto
     return filename.endswith('.htm') or filename.endswith('.html')
 
 def save_html(url, content):
     path_parts = urlparse(url).path.split('/')
-    if len(path_parts) >= 2:
+    
+    # Define um nome seguro para o arquivo
+    if "in.gov.br" in url:
+        # Pega o final da URL do DOU (ex: resolucao-anatel-n-765...)
+        safe_name = path_parts[-1]
+    elif len(path_parts) >= 2:
         safe_name = f"{path_parts[-2]}_{path_parts[-1]}"
     else:
         safe_name = path_parts[-1]
     
-    # Limpa caracteres inválidos
     safe_name = safe_name.replace(':', '').replace('?', '')
+    # Garante extensão .html
+    if not safe_name.endswith('.html'):
+        safe_name += ".html"
     
     filepath = os.path.join(OUTPUT_DIR, safe_name)
+    
+    # --- TRATAMENTO DO CONTEÚDO ---
+    soup = BeautifulSoup(content, 'html.parser')
+    html_to_save = content # Por padrão, salva tudo
+
+    # Se for Diário Oficial, tenta limpar para garantir que pegamos o texto
+    if "in.gov.br" in url:
+        dou_content = soup.find('div', class_='texto-dou')
+        if dou_content:
+            # Reconstrói um HTML mínimo válido apenas com o texto da lei
+            html_to_save = f"<html><body><h1>Fonte: {url}</h1>{str(dou_content)}</body></html>"
+        else:
+            print(f"   [AVISO] Estrutura 'texto-dou' não encontrada em {url}. Salvando página completa.")
+
+    # Se for Anatel, tenta limpar também
+    elif "anatel.gov.br" in url:
+        anatel_content = soup.find('div', class_='item-page')
+        if anatel_content:
+             html_to_save = f"<html><body><h1>Fonte: {url}</h1>{str(anatel_content)}</body></html>"
+
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
+            f.write(html_to_save)
         return True
     except Exception as e:
         print(f"Erro de I/O ao salvar {safe_name}: {e}")
@@ -154,10 +199,15 @@ def crawl():
                 
                 # Timeout aumentado para lidar com lentidão
                 response = session.get(current_url, timeout=20)
-                
-                if response.encoding != 'utf-8':
-                    response.encoding = 'windows-1252'
-                
+    
+                if "in.gov.br" in current_url or "anatel.gov.br" in current_url:
+                    # Sites DOU e Anatel
+                    response.encoding = 'utf-8'
+                else:
+                    # Site Planalto
+                    if response.encoding != 'utf-8':
+                        response.encoding = 'windows-1252'
+
                 html_content = response.text
                 
                 if is_content_file(current_url):
