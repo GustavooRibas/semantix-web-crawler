@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from collections import deque
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import html
 
 # --- CONFIGURAÇÕES ---
 OUTPUT_DIR = "dataset_planalto_completo"
@@ -25,7 +26,7 @@ DELAY = 0.5
 
 # URLs Sementes
 SEEDS = [
-    "https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2019/decreto/D10046.htm"
+    "https://antigo.mctic.gov.br/mctic/opencms/legislacao/portarias/Portaria_MCTI_n_4617_de_06042021.html"
 ]
 
 HEADERS = {
@@ -95,11 +96,13 @@ def is_valid_url(url):
         return False
 
     # Aceita se for do domínio anatel OU se for ccivil_03
+    is_ia = "antigo.mctic.gov.br" in parsed.netloc
+    is_saude = "bvsms.saude.gov.br" in parsed.netloc
     is_gov = "in.gov.br" in parsed.netloc
     is_anatel = "informacoes.anatel.gov.br" in parsed.netloc
     is_planalto = "ccivil_03" in parsed.path
 
-    return (is_anatel or is_planalto or is_gov) and "mailto:" not in url
+    return (is_anatel or is_planalto or is_gov or is_saude or is_ia) and "mailto:" not in url
 
 def is_content_file(url):
     filename = url.split('/')[-1].lower()
@@ -137,10 +140,11 @@ def save_html(url, content):
         safe_name += ".html"
     
     filepath = os.path.join(OUTPUT_DIR, safe_name)
+
+    content = html.unescape(content)
     
-    # --- TRATAMENTO DO CONTEÚDO ---
     soup = BeautifulSoup(content, 'html.parser')
-    html_to_save = content # Por padrão, salva tudo
+    html_to_save = content
 
     # Se for Diário Oficial, tenta limpar para garantir que pegamos o texto
     if "in.gov.br" in url:
@@ -200,13 +204,17 @@ def crawl():
                 # Timeout aumentado para lidar com lentidão
                 response = session.get(current_url, timeout=20)
     
-                if "in.gov.br" in current_url or "anatel.gov.br" in current_url:
+                '''
+                if "in.gov.br" in current_url or "anatel.gov.br" in current_url or "bvsms.saude.gov.br" in current_url:
                     # Sites DOU e Anatel
                     response.encoding = 'utf-8'
                 else:
                     # Site Planalto
                     if response.encoding != 'utf-8':
                         response.encoding = 'windows-1252'
+                '''
+
+                response.encoding = response.apparent_encoding
 
                 html_content = response.text
                 
